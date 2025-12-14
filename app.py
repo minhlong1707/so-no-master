@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import os
 import time
+from datetime import datetime
 
 # --- 1. CẤU HÌNH TRANG WEB ---
 st.set_page_config(
@@ -12,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS GIAO DIỆN DARK MODE ---
+# --- 2. CSS GIAO DIỆN (GIỮ NGUYÊN) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0E1117; color: #FAFAFA; }
@@ -49,20 +50,17 @@ st.markdown("""
 @st.dialog("🔔 Thông báo")
 def show_popup():
     st.write("Vui lòng đọc kỹ thông tin bên dưới:")
-    # Hiển thị link
     st.markdown("👉 **Điều khoản:** [https://tinyurl.com/dieukhoan29](https://tinyurl.com/dieukhoan29)")
-    st.write("") # Dòng trống cho thoáng
+    st.write("") 
 
-    # [FIX LỖI 1]: Đổi use_container_width=True thành width="stretch"
     if st.button("❌ Đóng", width="stretch"):
         st.session_state['popup_closed'] = True
         st.rerun()
 
-# Kiểm tra xem đã đóng popup chưa, nếu chưa thì hiện lên
 if 'popup_closed' not in st.session_state:
     show_popup()
 
-# --- 4. HÀM FORMAT TIỀN ---
+# --- 4. HÀM FORMAT ---
 def format_vnd(value):
     if pd.isna(value) or value == 0: return "-"
     return "{:,.0f}".format(value).replace(",", ".") + " VNĐ"
@@ -84,28 +82,51 @@ def load_data():
         df_no = pd.read_excel(xl, sheet_name=sheet_no, header=0)
         
         try:
-            # Lấy đầy đủ các cột
             df_no = df_no.iloc[:, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]]
             df_no.columns = ['STT', 'Họ tên', 'Nội dung', 'Phải trả', 'Đã trả', 'Còn lại', 
                              'Bonus', 'Thuế (%)', 'Tiền Thuế', 'Ngày bắt đầu', 'Hạn trả', 'Trạng thái']
         except: return None, None
 
+        # Lọc bỏ dòng trống
         df_no = df_no[pd.to_numeric(df_no['STT'], errors='coerce').notnull()]
-        # Chuyển tên thành chuỗi và loại bỏ khoảng trắng thừa
+        
+        # Chuyển STT sang số nguyên (int)
+        df_no['STT'] = df_no['STT'].astype(int)
+
         if 'Họ tên' in df_no.columns: 
             df_no['Họ tên'] = df_no['Họ tên'].astype(str).str.strip()
 
-        # Ép kiểu số
         for c in ['Phải trả', 'Đã trả', 'Còn lại', 'Bonus', 'Tiền Thuế']: 
             df_no[c] = pd.to_numeric(df_no[c], errors='coerce').fillna(0)
         df_no['Thuế (%)'] = pd.to_numeric(df_no['Thuế (%)'], errors='coerce').fillna(0)
         
-        # Tính % Tiến độ
         df_no['Tiến độ'] = df_no.apply(lambda x: (x['Đã trả'] / x['Phải trả'] * 100) if x['Phải trả'] > 0 else 0, axis=1)
         
-        # Ép kiểu ngày
         for d in ['Ngày bắt đầu', 'Hạn trả']:
             df_no[d] = pd.to_datetime(df_no[d], errors='coerce').dt.date
+
+        # --- LOGIC TÍNH NGÀY CÒN LẠI ---
+        today = pd.Timestamp.now().date()
+        
+        def tinh_ngay_con(row):
+            trang_thai = str(row['Trạng thái']).strip()
+            
+            if trang_thai.lower() == 'đã trả đủ':
+                return "✔️ Đã xong"
+            
+            if pd.isna(row['Hạn trả']):
+                return "-"
+            
+            delta = (row['Hạn trả'] - today).days
+            
+            if delta >= 0:
+                ngay_con = delta + 1
+                return f"Còn {ngay_con} ngày"
+            else:
+                return f"⚠️ Quá hạn {abs(delta)} ngày"
+
+        df_no['Thời gian'] = df_no.apply(tinh_ngay_con, axis=1)
+        # ---------------------------------------------
 
         # --- SHEET NẠP ---
         sheet_nap = next((s for s in xl.sheet_names if "NẠP" in s.upper()), None)
@@ -161,29 +182,45 @@ with tab1:
         df_show[col] = df_show[col].apply(format_vnd)
     df_show['Thuế (%)'] = df_show['Thuế (%)'].apply(format_percent)
 
-    # Sắp xếp thứ tự cột
     cols_order = ['STT', 'Họ tên', 'Nội dung', 'Phải trả', 'Đã trả', 'Còn lại', 'Tiến độ', 
-                  'Bonus', 'Thuế (%)', 'Tiền Thuế', 'Ngày bắt đầu', 'Hạn trả', 'Trạng thái']
+                  'Bonus', 'Thuế (%)', 'Tiền Thuế', 'Ngày bắt đầu', 'Hạn trả', 'Thời gian', 'Trạng thái']
     
+    # HÀM TÔ MÀU
+    def highlight_row(row):
+        trang_thai = str(row['Trạng thái'])
+        thoi_gian = str(row['Thời gian'])
+        han_tra = row['Hạn trả']
+
+        if 'Đã xong' in trang_thai or 'Đã trả đủ' in trang_thai:
+            return ['background-color: rgba(46, 204, 113, 0.3)'] * len(row) # Xanh lá
+        
+        if 'Còn 1 ngày' in thoi_gian:
+            return ['background-color: rgba(231, 76, 60, 0.3)'] * len(row) # Đỏ
+
+        if pd.isna(han_tra) or str(han_tra) == 'NaT':
+            return ['background-color: rgba(52, 152, 219, 0.3)'] * len(row) # Xanh dương
+        
+        return [''] * len(row)
+
     st.dataframe(
-        df_show[cols_order], 
-        width="stretch", # Chỗ này đã chuẩn rồi
+        df_show[cols_order].style.apply(highlight_row, axis=1), 
+        width="stretch", 
         hide_index=True, 
         height=700,
         column_config={
             "STT": st.column_config.TextColumn("STT", width=None),
-            "Phải trả": st.column_config.TextColumn("Phải trả", width="small"),
+            
+            # [ĐÃ CHỈNH] Autosize cho 2 cột này (width=None)
+            "Phải trả": st.column_config.TextColumn("Phải trả", width=None),
+            "Còn lại": st.column_config.TextColumn("Còn lại", width=None),
+            
             "Đã trả": st.column_config.TextColumn("Đã trả", width="small"),
-            "Còn lại": st.column_config.TextColumn("Còn lại", width="small"),
             "Tiến độ": st.column_config.ProgressColumn(
-                "Tiến độ trả",
-                format="%.0f%%",
-                min_value=0,
-                max_value=100,
-                width="small" 
+                "Tiến độ trả", format="%.0f%%", min_value=0, max_value=100, width="small" 
             ),
             "Ngày bắt đầu": st.column_config.DateColumn(format="DD/MM/YYYY"),
-            "Hạn trả": st.column_config.DateColumn(format="DD/MM/YYYY")
+            "Hạn trả": st.column_config.DateColumn(format="DD/MM/YYYY"),
+            "Thời gian": st.column_config.TextColumn("Thời gian", width="small"),
         }
     )
 
@@ -214,5 +251,4 @@ with tab2:
     fig1.update_traces(texttemplate='%{text:,.0f} VNĐ', textposition='inside')
     fig1.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     
-    # [FIX LỖI 2]: Đổi use_container_width=True thành width="stretch" ở biểu đồ
     st.plotly_chart(fig1, width="stretch")
