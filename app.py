@@ -105,8 +105,9 @@ def load_data():
         for d in ['Ngày bắt đầu', 'Hạn trả']:
             df_no[d] = pd.to_datetime(df_no[d], errors='coerce').dt.date
 
-        # --- LOGIC TÍNH NGÀY CÒN LẠI ---
-        today = pd.Timestamp.now().date()
+        # --- LOGIC TÍNH NGÀY CÒN LẠI (TIMEZONE VN) ---
+        # [CẬP NHẬT MỚI] Lấy giờ Việt Nam (UTC+7)
+        today = pd.Timestamp.now(tz='Asia/Ho_Chi_Minh').date()
         
         def tinh_ngay_con(row):
             trang_thai = str(row['Trạng thái']).strip()
@@ -210,7 +211,7 @@ with tab1:
         column_config={
             "STT": st.column_config.TextColumn("STT", width=None),
             
-            # [ĐÃ CHỈNH] Autosize cho 2 cột này (width=None)
+            # Autosize cho 2 cột này
             "Phải trả": st.column_config.TextColumn("Phải trả", width=None),
             "Còn lại": st.column_config.TextColumn("Còn lại", width=None),
             
